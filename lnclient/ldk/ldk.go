@@ -494,6 +494,10 @@ func (ls *LDKService) MakeOffer(ctx context.Context, description string) (string
 	return offer.String(), nil
 }
 
+func (ls *LDKService) PayOffer(ctx context.Context, offer string, amountSat uint64, payerNote string) (*lnclient.PayOfferResponse, error) {
+	return ls.PayOfferSync(ctx, offer, amountSat*1000, payerNote)
+}
+
 func (ls *LDKService) SendPaymentSync(invoice string, amountMsat *uint64) (*lnclient.PayInvoiceResponse, error) {
 	paymentRequest, err := decodepay.Decodepay(invoice)
 	if err != nil {

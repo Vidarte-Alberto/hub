@@ -34,14 +34,16 @@ export default function PaymentSuccess() {
     }
   }, [state, navigate]);
 
-  if (!state?.preimage || !state?.invoice) {
+  if (!state?.preimage || (!state?.invoice && !state?.offer)) {
     return null;
   }
 
   const to = state?.to as string;
   const pageTitle = state?.pageTitle as string;
-  const invoice = state?.invoice as Invoice;
-  const amountSat = state?.amountSat as number;
+  const invoice = state?.invoice as Invoice | undefined;
+  const offer = state?.offer as string | undefined;
+  const amountSat = state?.amountSat as number | undefined;
+  const description = state?.description as string | undefined;
 
   const copy = () => {
     copyToClipboard(state.preimage as string);
@@ -60,25 +62,36 @@ export default function PaymentSuccess() {
             <div className="flex flex-col gap-1 items-center">
               <p className="text-2xl font-medium slashed-zero">
                 <FormattedBitcoinAmount
-                  amountMsat={(invoice.satoshi || amountSat) * 1000}
+                  amountMsat={((invoice?.satoshi || amountSat) ?? 0) * 1000}
                 />
               </p>
               <FormattedFiatAmount
-                amountSat={invoice.satoshi || amountSat}
+                amountSat={(invoice?.satoshi || amountSat) ?? 0}
                 className="text-xl"
               />
             </div>
-            {(to || invoice.description || invoice.successAction) && (
+            {(to ||
+              invoice?.description ||
+              description ||
+              invoice?.successAction ||
+              offer) && (
               <div className="flex flex-col items-center w-full gap-4">
                 {to && (
                   <p className="text-muted-foreground">
                     to <span className="text-foreground">{to}</span>
                   </p>
                 )}
-                {invoice.description && (
-                  <p className="text-muted-foreground">{invoice.description}</p>
+                {(invoice?.description || description) && (
+                  <p className="text-muted-foreground">
+                    {invoice?.description || description}
+                  </p>
                 )}
-                <SuccessAction action={invoice.successAction} />
+                {!invoice && offer && (
+                  <p className="text-muted-foreground break-all text-center">
+                    Lightning Offer
+                  </p>
+                )}
+                <SuccessAction action={invoice?.successAction} />
               </div>
             )}
           </CardContent>
@@ -102,7 +115,11 @@ export default function PaymentSuccess() {
   );
 }
 
-function SuccessAction({ action }: { action: Invoice["successAction"] }) {
+function SuccessAction({
+  action,
+}: {
+  action: Invoice["successAction"] | undefined;
+}) {
   if (!action) {
     return null;
   }

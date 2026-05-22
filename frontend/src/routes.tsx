@@ -81,6 +81,7 @@ import WithdrawOnchainFunds from "src/screens/wallet/WithdrawOnchainFunds";
 import ReceiveInvoice from "src/screens/wallet/receive/ReceiveInvoice";
 import ReceiveOffer from "src/screens/wallet/receive/ReceiveOffer";
 import ReceiveOnchain from "src/screens/wallet/receive/ReceiveOnchain";
+import ConfirmOfferPayment from "src/screens/wallet/send/ConfirmOfferPayment";
 import ConfirmPayment from "src/screens/wallet/send/ConfirmPayment";
 import LnurlPay from "src/screens/wallet/send/LnurlPay";
 import OnchainSend from "src/screens/wallet/send/Onchain";
@@ -201,6 +202,10 @@ const routes: RouteObject[] = [
               {
                 path: "confirm-payment",
                 element: <ConfirmPayment />,
+              },
+              {
+                path: "confirm-offer",
+                element: <ConfirmOfferPayment />,
               },
               {
                 path: "onchain-success",

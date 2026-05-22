@@ -77,6 +77,7 @@ type LNClient interface {
 	UpdateChannel(ctx context.Context, updateChannelRequest *UpdateChannelRequest) error
 	DisconnectPeer(ctx context.Context, peerId string) error
 	MakeOffer(ctx context.Context, description string) (string, error)
+	PayOffer(ctx context.Context, offer string, amountSat uint64, payerNote string) (*PayOfferResponse, error)
 	GetNewOnchainAddress(ctx context.Context) (string, error)
 	ResetRouter(key string) error
 	GetOnchainBalance(ctx context.Context) (*OnchainBalanceResponse, error)

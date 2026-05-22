@@ -38,6 +38,7 @@ type API interface {
 	CloseChannel(ctx context.Context, peerId, channelId string, force bool) (*CloseChannelResponse, error)
 	UpdateChannel(ctx context.Context, updateChannelRequest *UpdateChannelRequest) error
 	MakeOffer(ctx context.Context, description string) (string, error)
+	PayOffer(ctx context.Context, offer string, amountSat uint64, payerNote string, metadata map[string]interface{}, fromAppId *uint) (*SendPaymentResponse, error)
 	GetNewOnchainAddress(ctx context.Context) (string, error)
 	GetUnusedOnchainAddress(ctx context.Context) (string, error)
 	SignMessage(ctx context.Context, message string) (*SignMessageResponse, error)
@@ -481,6 +482,14 @@ type PayInvoiceRequest struct {
 
 type MakeOfferRequest struct {
 	Description string `json:"description"`
+}
+
+type PayOfferRequest struct {
+	Offer     string   `json:"offer"`
+	AmountSat *uint64  `json:"amountSat"`
+	PayerNote string   `json:"payerNote"`
+	Metadata  Metadata `json:"metadata"`
+	FromAppID *uint    `json:"fromAppId"`
 }
 
 type MakeInvoiceRequest struct {

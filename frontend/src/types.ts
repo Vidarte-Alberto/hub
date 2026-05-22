@@ -371,6 +371,14 @@ export type PayInvoiceRequest = {
   fromAppId?: number;
 };
 
+export type PayOfferRequest = {
+  offer: string;
+  amountSat?: number;
+  payerNote: string;
+  metadata?: Record<string, unknown>;
+  fromAppId?: number;
+};
+
 export type OpenChannelRequest = {
   pubkey: string;
   amountSats: number;

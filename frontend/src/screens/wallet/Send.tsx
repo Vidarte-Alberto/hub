@@ -16,6 +16,10 @@ import { useBalances } from "src/hooks/useBalances";
 import { useChannels } from "src/hooks/useChannels";
 import { parseBip21 } from "src/utils/parseBip21";
 
+function isBolt12Offer(value: string) {
+  return value.toLowerCase().startsWith("lno1");
+}
+
 export default function Send() {
   const { data: balances } = useBalances();
   const { data: channels } = useChannels();
@@ -34,6 +38,13 @@ export default function Send() {
     try {
       const bip21 = parseBip21(uri);
       if (bip21.lightning) {
+        if (isBolt12Offer(bip21.lightning)) {
+          navigate(`/wallet/send/confirm-offer`, {
+            state: { args: { offer: bip21.lightning } },
+            replace: true,
+          });
+          return;
+        }
         const invoice = new Invoice({ pr: bip21.lightning });
         if (invoice.satoshi === 0) {
           navigate(`/wallet/send/0-amount`, {
@@ -98,6 +109,15 @@ export default function Send() {
         }
       }
 
+      if (isBolt12Offer(recipient)) {
+        navigate(`/wallet/send/confirm-offer`, {
+          state: {
+            args: { offer: recipient },
+          },
+        });
+        return;
+      }
+
       const invoice = new Invoice({ pr: recipient });
       if (invoice.satoshi === 0) {
         navigate(`/wallet/send/0-amount`, {
@@ -142,7 +162,7 @@ export default function Send() {
                 type="text"
                 value={recipient}
                 autoFocus
-                placeholder="Invoice, lightning address, on-chain address"
+                placeholder="Invoice, lightning offer, lightning address, on-chain address"
                 onChange={(e) => {
                   setRecipient(e.target.value.trim());
                   setShowSwapAlert(false);

@@ -526,6 +526,10 @@ func (svc *CashuService) MakeOffer(ctx context.Context, description string) (str
 	return "", errors.New("not supported")
 }
 
+func (svc *CashuService) PayOffer(ctx context.Context, offer string, amountSat uint64, payerNote string) (*lnclient.PayOfferResponse, error) {
+	return nil, errors.New("not supported")
+}
+
 func (cs *CashuService) ListOnchainTransactions(ctx context.Context) ([]lnclient.OnchainTransaction, error) {
 	return nil, errors.ErrUnsupported
 }

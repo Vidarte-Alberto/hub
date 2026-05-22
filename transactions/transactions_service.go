@@ -40,6 +40,7 @@ type TransactionsService interface {
 	LookupTransaction(ctx context.Context, paymentHash string, transactionType *string, lnClient lnclient.LNClient, appId *uint) (*Transaction, error)
 	ListTransactions(ctx context.Context, from, until, limit, offset uint64, unpaidOutgoing bool, unpaidIncoming bool, transactionType *string, lnClient lnclient.LNClient, appId *uint, forceFilterByAppId bool) (transactions []Transaction, totalCount uint64, err error)
 	SendPaymentSync(payReq string, amountMsat *uint64, metadata map[string]interface{}, lnClient lnclient.LNClient, appId *uint, requestEventId *uint) (*Transaction, error)
+	SendOfferPaymentSync(ctx context.Context, offer string, amountSat uint64, payerNote string, metadata map[string]interface{}, lnClient lnclient.LNClient, appId *uint, requestEventId *uint) (*Transaction, error)
 	SendKeysend(amountMsat uint64, destination string, customRecords []lnclient.TLVRecord, preimage string, lnClient lnclient.LNClient, appId *uint, requestEventId *uint) (*Transaction, error)
 	MakeHoldInvoice(ctx context.Context, amountMsat uint64, description string, descriptionHash string, expiry uint64, paymentHash string, minCltvExpiryDelta *uint64, metadata map[string]interface{}, lnClient lnclient.LNClient, appId *uint, requestEventId *uint) (*Transaction, error)
 	SettleHoldInvoice(ctx context.Context, preimage string, lnClient lnclient.LNClient) (*Transaction, error)
@@ -422,6 +423,94 @@ func (svc *transactionsService) SendPaymentSync(payReq string, amountMsat *uint6
 	return settledTransaction, nil
 }
 
+func (svc *transactionsService) SendOfferPaymentSync(ctx context.Context, offer string, amountSat uint64, payerNote string, metadata map[string]interface{}, lnClient lnclient.LNClient, appId *uint, requestEventId *uint) (*Transaction, error) {
+	if amountSat == 0 {
+		return nil, errors.New("amountSat must be greater than 0")
+	}
+
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadata["offer"] = map[string]interface{}{
+		"encoded":    offer,
+		"payer_note": payerNote,
+	}
+
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		logger.Logger.WithError(err).Error("Failed to serialize offer payment metadata")
+		return nil, err
+	}
+	if len(metadataBytes) > constants.INVOICE_METADATA_MAX_LENGTH {
+		return nil, fmt.Errorf("encoded payment metadata provided is too large. Limit: %d Received: %d", constants.INVOICE_METADATA_MAX_LENGTH, len(metadataBytes))
+	}
+
+	var dbTransaction db.Transaction
+	paymentAmountMsat := amountSat * 1000
+
+	err = func() error {
+		balanceValidationLock.Lock()
+		defer balanceValidationLock.Unlock()
+		return svc.db.Transaction(func(tx *gorm.DB) error {
+			err := svc.validateCanPay(tx, appId, paymentAmountMsat, "BOLT12 offer", false)
+			if err != nil {
+				return err
+			}
+
+			dbTransaction = db.Transaction{
+				AppId:          appId,
+				RequestEventId: requestEventId,
+				Type:           constants.TRANSACTION_TYPE_OUTGOING,
+				State:          constants.TRANSACTION_STATE_PENDING,
+				FeeReserveMsat: CalculateFeeReserveMsat(paymentAmountMsat),
+				AmountMsat:     paymentAmountMsat,
+				PaymentRequest: offer,
+				Description:    "BOLT12 offer",
+				Metadata:       datatypes.JSON(metadataBytes),
+			}
+			return tx.Create(&dbTransaction).Error
+		})
+	}()
+	if err != nil {
+		logger.Logger.WithField("offer", offer).WithError(err).Error("Failed to create offer payment DB transaction")
+		return nil, err
+	}
+
+	logger.Logger.WithFields(logrus.Fields{
+		"app_id":           appId,
+		"request_event_id": requestEventId,
+		"amount_sat":       amountSat,
+	}).Debug("Initiating BOLT12 offer payment")
+
+	response, err := lnClient.PayOffer(ctx, offer, amountSat, payerNote)
+	if err != nil {
+		logger.Logger.WithField("offer", offer).WithError(err).Error("Failed to pay BOLT12 offer")
+		svc.db.Transaction(func(tx *gorm.DB) error {
+			return svc.markPaymentFailed(tx, &dbTransaction, err.Error())
+		})
+		return nil, err
+	}
+
+	if response.PaymentHash == "" {
+		return nil, errors.New("no payment hash in offer payment response")
+	}
+	dbTransaction.PaymentHash = response.PaymentHash
+
+	var settledTransaction *db.Transaction
+	err = svc.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&dbTransaction).Update("payment_hash", response.PaymentHash).Error; err != nil {
+			return err
+		}
+		settledTransaction, err = svc.markTransactionSettled(tx, &dbTransaction, response.Preimage, response.FeeMsat, false)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return settledTransaction, nil
+}
+
 func (svc *transactionsService) SendKeysend(amountMsat uint64, destination string, customRecords []lnclient.TLVRecord, preimage string, lnClient lnclient.LNClient, appId *uint, requestEventId *uint) (*Transaction, error) {
 	if preimage == "" {
 		preImageBytes, err := makePreimageHex()
@@ -690,12 +779,6 @@ func (svc *transactionsService) ListTransactions(ctx context.Context, from, unti
 }
 
 func (svc *transactionsService) checkUnsettledTransactions(ctx context.Context, lnClient lnclient.LNClient) {
-	// Only check unsettled transactions for clients that don't support async events
-	// checkUnsettledTransactions does not work for keysend payments!
-	if slices.Contains(lnClient.GetSupportedNIP47NotificationTypes(), "payment_received") {
-		return
-	}
-
 	// check pending payments less than a day old
 	transactions := []Transaction{}
 	result := svc.db.Where("state = ? AND created_at > ?", constants.TRANSACTION_STATE_PENDING, time.Now().Add(-24*time.Hour)).Find(&transactions)
@@ -708,7 +791,9 @@ func (svc *transactionsService) checkUnsettledTransactions(ctx context.Context, 
 	}
 }
 func (svc *transactionsService) checkUnsettledTransaction(ctx context.Context, transaction *db.Transaction, lnClient lnclient.LNClient) {
-	if slices.Contains(lnClient.GetSupportedNIP47NotificationTypes(), "payment_received") {
+	// Incoming invoices are settled via async notifications on supporting backends.
+	// Outgoing payments may still need reconciliation if the process restarts mid-payment.
+	if transaction.Type == constants.TRANSACTION_TYPE_INCOMING && slices.Contains(lnClient.GetSupportedNIP47NotificationTypes(), "payment_received") {
 		return
 	}
 

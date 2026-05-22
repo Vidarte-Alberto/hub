@@ -1602,6 +1602,32 @@ func (_c *MockLNClient_MakeOffer_Call) RunAndReturn(run func(ctx context.Context
 	return _c
 }
 
+// PayOffer provides a mock function for the type MockLNClient
+func (_mock *MockLNClient) PayOffer(ctx context.Context, offer string, amountSat uint64, payerNote string) (*lnclient.PayOfferResponse, error) {
+	ret := _mock.Called(ctx, offer, amountSat, payerNote)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PayOffer")
+	}
+
+	var r0 *lnclient.PayOfferResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint64, string) (*lnclient.PayOfferResponse, error)); ok {
+		return returnFunc(ctx, offer, amountSat, payerNote)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint64, string) *lnclient.PayOfferResponse); ok {
+		r0 = returnFunc(ctx, offer, amountSat, payerNote)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*lnclient.PayOfferResponse)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uint64, string) error); ok {
+		r1 = returnFunc(ctx, offer, amountSat, payerNote)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
 // OpenChannel provides a mock function for the type MockLNClient
 func (_mock *MockLNClient) OpenChannel(ctx context.Context, openChannelRequest *lnclient.OpenChannelRequest) (*lnclient.OpenChannelResponse, error) {
 	ret := _mock.Called(ctx, openChannelRequest)

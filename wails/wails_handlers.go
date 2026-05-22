@@ -1042,6 +1042,30 @@ func (app *WailsApp) WailsRequestRouter(route string, method string, body string
 			return WailsRequestRouterResponse{Body: nil, Error: err.Error()}
 		}
 		return WailsRequestRouterResponse{Body: offer, Error: ""}
+	case "/api/offers/pay":
+		payOfferRequest := &api.PayOfferRequest{}
+		err := json.Unmarshal([]byte(body), payOfferRequest)
+		if err != nil {
+			logger.Logger.WithFields(logrus.Fields{
+				"route":  route,
+				"method": method,
+				"body":   body,
+			}).WithError(err).Error("Failed to decode request to wails router")
+			return WailsRequestRouterResponse{Body: nil, Error: err.Error()}
+		}
+		if payOfferRequest.AmountSat == nil || *payOfferRequest.AmountSat == 0 {
+			return WailsRequestRouterResponse{Body: nil, Error: "amountSat must be greater than 0"}
+		}
+		paymentResponse, err := app.api.PayOffer(ctx, payOfferRequest.Offer, *payOfferRequest.AmountSat, payOfferRequest.PayerNote, payOfferRequest.Metadata, payOfferRequest.FromAppID)
+		if err != nil {
+			logger.Logger.WithFields(logrus.Fields{
+				"route":  route,
+				"method": method,
+				"body":   body,
+			}).WithError(err).Error("Failed to pay BOLT-12 offer")
+			return WailsRequestRouterResponse{Body: nil, Error: err.Error()}
+		}
+		return WailsRequestRouterResponse{Body: paymentResponse, Error: ""}
 	case "/api/commands":
 		nodeCommandsResponse, err := app.api.GetCustomNodeCommands()
 		if err != nil {

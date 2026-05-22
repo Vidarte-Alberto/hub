@@ -36,11 +36,6 @@ func TestCheckUnsettledTransaction(t *testing.T) {
 		Preimage:  "dummy",
 	}
 
-	// do not allow checking unsettled transactions if notifications are supported
-	transactionsService.checkUnsettledTransaction(context.TODO(), &dbTransaction, svc.LNClient)
-	assert.Equal(t, constants.TRANSACTION_STATE_PENDING, dbTransaction.State)
-
-	svc.LNClient.(*tests.MockLn).SupportedNotificationTypes = &[]string{}
 	transactionsService.checkUnsettledTransaction(context.TODO(), &dbTransaction, svc.LNClient)
 
 	assert.NoError(t, err)
@@ -75,15 +70,6 @@ func TestCheckUnsettledTransactions(t *testing.T) {
 		Preimage:  "dummy",
 	}
 
-	// do not allow checking unsettled transactions if notifications are supported
-	transactionsService.checkUnsettledTransactions(context.TODO(), svc.LNClient)
-
-	svc.DB.Find(&dbTransaction, db.Transaction{
-		ID: dbTransaction.ID,
-	})
-	assert.Equal(t, constants.TRANSACTION_STATE_PENDING, dbTransaction.State)
-
-	svc.LNClient.(*tests.MockLn).SupportedNotificationTypes = &[]string{}
 	transactionsService.checkUnsettledTransactions(context.TODO(), svc.LNClient)
 
 	svc.DB.Find(&dbTransaction, db.Transaction{
@@ -95,4 +81,30 @@ func TestCheckUnsettledTransactions(t *testing.T) {
 	assert.Equal(t, "nwc_payment_sent", mockEventConsumer.GetConsumedEvents()[0].Event)
 	settledTransaction := mockEventConsumer.GetConsumedEvents()[0].Properties.(*db.Transaction)
 	assert.Equal(t, dbTransaction.ID, settledTransaction.ID)
+}
+
+func TestCheckUnsettledIncomingTransactionSkipsWhenNotificationsAreSupported(t *testing.T) {
+	svc, err := tests.CreateTestService(t)
+	require.NoError(t, err)
+	defer svc.Remove()
+
+	dbTransaction := db.Transaction{
+		State:       constants.TRANSACTION_STATE_PENDING,
+		Type:        constants.TRANSACTION_TYPE_INCOMING,
+		PaymentHash: tests.MockLNClientTransaction.PaymentHash,
+		AmountMsat:  123000,
+	}
+	svc.DB.Create(&dbTransaction)
+
+	transactionsService := NewTransactionsService(svc.DB, svc.EventPublisher)
+	settledAt := time.Now().Unix()
+	svc.LNClient.(*tests.MockLn).MockTransaction = &lnclient.Transaction{
+		SettledAt: &settledAt,
+		Preimage:  "dummy",
+	}
+
+	transactionsService.checkUnsettledTransaction(context.TODO(), &dbTransaction, svc.LNClient)
+
+	svc.DB.Find(&dbTransaction, db.Transaction{ID: dbTransaction.ID})
+	assert.Equal(t, constants.TRANSACTION_STATE_PENDING, dbTransaction.State)
 }

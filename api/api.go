@@ -1211,6 +1211,20 @@ func (api *api) MakeOffer(ctx context.Context, description string) (string, erro
 	return offer, nil
 }
 
+func (api *api) PayOffer(ctx context.Context, offer string, amountSat uint64, payerNote string, metadata map[string]interface{}, fromAppId *uint) (*SendPaymentResponse, error) {
+	lnClient := api.svc.GetLNClient()
+	if lnClient == nil {
+		return nil, ErrLNClientNotStarted
+	}
+
+	transaction, err := api.svc.GetTransactionsService().SendOfferPaymentSync(ctx, offer, amountSat, payerNote, metadata, lnClient, fromAppId, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return toApiTransaction(transaction), nil
+}
+
 func (api *api) GetNewOnchainAddress(ctx context.Context) (string, error) {
 	lnClient := api.svc.GetLNClient()
 	if lnClient == nil {

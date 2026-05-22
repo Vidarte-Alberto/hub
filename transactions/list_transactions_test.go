@@ -10,8 +10,13 @@ import (
 
 	"github.com/getAlby/hub/constants"
 	"github.com/getAlby/hub/db"
+	"github.com/getAlby/hub/lnclient"
 	"github.com/getAlby/hub/tests"
 )
+
+func disableAutomaticSettlementForListTests(svc *tests.TestService) {
+	svc.LNClient.(*tests.MockLn).MockTransaction = &lnclient.Transaction{}
+}
 
 func TestListTransactions_Paid(t *testing.T) {
 	ctx := context.TODO()
@@ -19,6 +24,7 @@ func TestListTransactions_Paid(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForListTests(svc)
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
@@ -64,6 +70,7 @@ func TestListTransactions_UnpaidIncoming(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForListTests(svc)
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
@@ -132,6 +139,7 @@ func TestListTransactions_UnpaidOutgoing(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForListTests(svc)
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
@@ -200,6 +208,7 @@ func TestListTransactions_Unpaid(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForListTests(svc)
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
@@ -262,6 +271,7 @@ func TestListTransactions_Limit(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForListTests(svc)
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
@@ -299,6 +309,7 @@ func TestListTransactions_Offset(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForListTests(svc)
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
@@ -356,6 +367,7 @@ func TestListTransactions_FromUntil(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForListTests(svc)
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
@@ -407,6 +419,7 @@ func TestListTransactions_FromUntilUnpaidOutgoing(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForListTests(svc)
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
@@ -469,6 +482,7 @@ func TestListTransactions_FromUntilUnpaidIncoming(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForListTests(svc)
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{

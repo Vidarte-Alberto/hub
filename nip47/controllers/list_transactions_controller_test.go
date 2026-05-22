@@ -12,15 +12,21 @@ import (
 
 	"github.com/getAlby/hub/constants"
 	"github.com/getAlby/hub/db"
+	"github.com/getAlby/hub/lnclient"
 	"github.com/getAlby/hub/nip47/models"
 	"github.com/getAlby/hub/tests"
 )
+
+func disableAutomaticSettlementForNip47ListTransactionTests(svc *tests.TestService) {
+	svc.LNClient.(*tests.MockLn).MockTransaction = &lnclient.Transaction{}
+}
 
 func TestHandleListTransactionsEvent(t *testing.T) {
 	ctx := context.TODO()
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForNip47ListTransactionTests(svc)
 
 	const nip47ListTransactionsJson = `
 {
@@ -97,6 +103,7 @@ func TestHandleListTransactionsEvent_UnpaidOutgoingOnly(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForNip47ListTransactionTests(svc)
 
 	const nip47ListTransactionsJson = `
 {
@@ -157,6 +164,7 @@ func TestHandleListTransactionsEvent_UnpaidIncomingOnly(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForNip47ListTransactionTests(svc)
 
 	const nip47ListTransactionsJson = `
 {
@@ -217,6 +225,7 @@ func TestHandleListTransactionsEvent_Unpaid(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForNip47ListTransactionTests(svc)
 
 	const nip47ListTransactionsJson = `
 {
@@ -275,6 +284,7 @@ func TestHandleListTransactionsEvent_Paid(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	disableAutomaticSettlementForNip47ListTransactionTests(svc)
 
 	const nip47ListTransactionsJson = `
 {

@@ -11,10 +11,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	decodepay "github.com/nbd-wtf/ln-decodepay"
 
+	"github.com/getAlby/hub/events"
 	"github.com/getAlby/hub/lnclient"
 	"github.com/getAlby/hub/logger"
 
@@ -52,6 +54,17 @@ type PayResponse struct {
 	RoutingFeeSat   int64  `json:"routingFeeSat"`
 }
 
+type PayOfferResponse struct {
+	PaymentHash     string `json:"paymentHash"`
+	PaymentId       string `json:"paymentId"`
+	PaymentPreimage string `json:"paymentPreimage"`
+	RoutingFeeSat   int64  `json:"routingFeeSat"`
+}
+
+type MakeOfferResponse struct {
+	Offer string `json:"offer"`
+}
+
 type MakeInvoiceResponse struct {
 	AmountSat   int64  `json:"amountSat"`
 	PaymentHash string `json:"paymentHash"`
@@ -68,21 +81,37 @@ type BalanceResponse struct {
 }
 
 type PhoenixService struct {
-	Address       string
-	Authorization string
-	pubkey        string
-	nodeInfo      *lnclient.NodeInfo
-	ctx           context.Context
+	Address        string
+	Authorization  string
+	pubkey         string
+	nodeInfo       *lnclient.NodeInfo
+	ctx            context.Context
+	eventPublisher events.EventPublisher
+	syncMu         sync.Mutex
+	syncFromMs     int64
 }
 
-func NewPhoenixService(ctx context.Context, address string, authorization string) (result lnclient.LNClient, err error) {
+const (
+	incomingPaymentsPollInterval = 10 * time.Second
+	incomingPaymentsPageSize     = 50
+	incomingPaymentsOverlap      = 1 * time.Minute
+	incomingPaymentsBackfill     = 30 * 24 * time.Hour
+)
+
+func NewPhoenixService(ctx context.Context, eventPublisher events.EventPublisher, address string, authorization string) (result lnclient.LNClient, err error) {
 	authorizationBase64 := b64.StdEncoding.EncodeToString([]byte(":" + authorization))
 	// some environments (e.g. in a cloud environment like render.com) can only get the address and the port but not the protocol
 	// in those cases we default to http for local requests
 	if !strings.HasPrefix(address, "http") {
 		address = "http://" + address
 	}
-	phoenixService := &PhoenixService{ctx: ctx, Address: address, Authorization: authorizationBase64}
+	phoenixService := &PhoenixService{
+		ctx:            ctx,
+		Address:        address,
+		Authorization:  authorizationBase64,
+		eventPublisher: eventPublisher,
+		syncFromMs:     time.Now().Add(-incomingPaymentsBackfill).UnixMilli(),
+	}
 
 	info, err := fetchNodeInfo(ctx, phoenixService)
 	if err != nil {
@@ -90,6 +119,7 @@ func NewPhoenixService(ctx context.Context, address string, authorization string
 	}
 	phoenixService.nodeInfo = info
 	phoenixService.pubkey = info.Pubkey
+	phoenixService.startIncomingPaymentsSync()
 
 	return phoenixService, nil
 }
@@ -454,7 +484,7 @@ func (svc *PhoenixService) GetSupportedNIP47Methods() []string {
 }
 
 func (svc *PhoenixService) GetSupportedNIP47NotificationTypes() []string {
-	return []string{}
+	return []string{"payment_received"}
 }
 
 func (svc *PhoenixService) GetPubkey() string {
@@ -468,30 +498,169 @@ func phoenixInvoiceToTransaction(invoiceRes *InvoiceResponse) (*lnclient.Transac
 		settledAt = &settledAtUnix
 	}
 
-	paymentRequest, err := decodepay.Decodepay(invoiceRes.Invoice)
-	if err != nil {
-		logger.Logger.WithFields(logrus.Fields{
-			"bolt11": invoiceRes.Invoice,
-		}).Errorf("Failed to decode bolt11 invoice: %v", err)
+	var (
+		amountMsat      int64 = invoiceRes.ReceivedSat * 1000
+		expiresAt       *int64
+		descriptionHash string
+	)
 
-		return nil, err
+	if invoiceRes.Invoice != "" {
+		paymentRequest, err := decodepay.Decodepay(invoiceRes.Invoice)
+		if err != nil {
+			logger.Logger.WithFields(logrus.Fields{
+				"payment_hash": invoiceRes.PaymentHash,
+				"invoice":      invoiceRes.Invoice,
+			}).WithError(err).Warn("Failed to decode phoenixd invoice, falling back to payment metadata")
+		} else {
+			amountMsat = paymentRequest.MSatoshi
+			expiresAtUnix := time.UnixMilli(int64(paymentRequest.CreatedAt) * 1000).Add(time.Duration(paymentRequest.Expiry) * time.Second).Unix()
+			expiresAt = &expiresAtUnix
+			descriptionHash = paymentRequest.DescriptionHash
+		}
 	}
-
-	expiresAt := time.UnixMilli(int64(paymentRequest.CreatedAt) * 1000).Add(time.Duration(paymentRequest.Expiry) * time.Second).Unix()
 
 	return &lnclient.Transaction{
 		Type:            "incoming",
 		Invoice:         invoiceRes.Invoice,
 		Preimage:        invoiceRes.Preimage,
 		PaymentHash:     invoiceRes.PaymentHash,
-		AmountMsat:      paymentRequest.MSatoshi,
+		AmountMsat:      amountMsat,
 		FeesPaidMsat:    invoiceRes.FeesSat * 1000,
 		CreatedAt:       time.UnixMilli(invoiceRes.CreatedAt).Unix(),
 		Description:     invoiceRes.Description,
 		SettledAt:       settledAt,
-		ExpiresAt:       &expiresAt,
-		DescriptionHash: paymentRequest.DescriptionHash,
+		ExpiresAt:       expiresAt,
+		DescriptionHash: descriptionHash,
 	}, nil
+}
+
+func (svc *PhoenixService) startIncomingPaymentsSync() {
+	if svc.eventPublisher == nil {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(incomingPaymentsPollInterval)
+		defer ticker.Stop()
+
+		for {
+			if err := svc.syncIncomingPayments(svc.ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Logger.WithError(err).Warn("Failed to sync phoenixd incoming payments")
+			}
+
+			select {
+			case <-svc.ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (svc *PhoenixService) syncIncomingPayments(ctx context.Context) error {
+	fromMs := svc.getSyncFromMs()
+	toMs := time.Now().UnixMilli()
+	var maxSeenTimestampMs int64
+
+	for offset := uint64(0); ; offset += incomingPaymentsPageSize {
+		payments, err := svc.listIncomingPayments(ctx, fromMs, toMs, incomingPaymentsPageSize, offset)
+		if err != nil {
+			return err
+		}
+
+		for _, payment := range payments {
+			transaction, err := phoenixInvoiceToTransaction(&payment)
+			if err != nil {
+				logger.Logger.WithField("payment_hash", payment.PaymentHash).WithError(err).Warn("Failed to convert phoenixd incoming payment to transaction")
+				continue
+			}
+			if transaction.SettledAt == nil {
+				continue
+			}
+
+			svc.eventPublisher.Publish(&events.Event{
+				Event:      "nwc_lnclient_payment_received",
+				Properties: transaction,
+			})
+
+			candidateTimestampMs := payment.CompletedAt
+			if candidateTimestampMs == 0 {
+				candidateTimestampMs = payment.CreatedAt
+			}
+			if candidateTimestampMs > maxSeenTimestampMs {
+				maxSeenTimestampMs = candidateTimestampMs
+			}
+		}
+
+		if len(payments) < incomingPaymentsPageSize {
+			break
+		}
+	}
+
+	nextFromMs := toMs - incomingPaymentsOverlap.Milliseconds()
+	if maxSeenTimestampMs > 0 {
+		nextFromMs = maxSeenTimestampMs - incomingPaymentsOverlap.Milliseconds()
+	}
+	if nextFromMs < 0 {
+		nextFromMs = 0
+	}
+	if nextFromMs < fromMs {
+		nextFromMs = fromMs
+	}
+	svc.setSyncFromMs(nextFromMs)
+
+	return nil
+}
+
+func (svc *PhoenixService) listIncomingPayments(ctx context.Context, fromMs int64, toMs int64, limit uint64, offset uint64) ([]InvoiceResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, svc.Address+"/payments/incoming", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	query := req.URL.Query()
+	query.Set("from", strconv.FormatInt(fromMs, 10))
+	query.Set("to", strconv.FormatInt(toMs, 10))
+	query.Set("limit", strconv.FormatUint(limit, 10))
+	query.Set("offset", strconv.FormatUint(offset, 10))
+	query.Set("all", "false")
+	req.URL.RawQuery = query.Encode()
+	req.Header.Add("Authorization", "Basic "+svc.Authorization)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("phoenixd /payments/incoming returned non-success status: %d %s", resp.StatusCode, string(body))
+	}
+
+	var payments []InvoiceResponse
+	if err := json.Unmarshal(body, &payments); err != nil {
+		return nil, err
+	}
+	return payments, nil
+}
+
+func (svc *PhoenixService) getSyncFromMs() int64 {
+	svc.syncMu.Lock()
+	defer svc.syncMu.Unlock()
+
+	return svc.syncFromMs
+}
+
+func (svc *PhoenixService) setSyncFromMs(syncFromMs int64) {
+	svc.syncMu.Lock()
+	defer svc.syncMu.Unlock()
+
+	svc.syncFromMs = syncFromMs
 }
 
 func (svc *PhoenixService) GetCustomNodeCommandDefinitions() []lnclient.CustomNodeCommandDef {
@@ -503,7 +672,89 @@ func (svc *PhoenixService) ExecuteCustomNodeCommand(ctx context.Context, command
 }
 
 func (svc *PhoenixService) MakeOffer(ctx context.Context, description string) (string, error) {
-	return "", errors.New("not supported")
+	form := url.Values{}
+	form.Add("description", description)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, svc.Address+"/createoffer", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Add("Authorization", "Basic "+svc.Authorization)
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("phoenixd /createoffer returned non-success status: %d %s", resp.StatusCode, string(body))
+	}
+
+	var offerRes MakeOfferResponse
+	if err := json.Unmarshal(body, &offerRes); err == nil && offerRes.Offer != "" {
+		return offerRes.Offer, nil
+	}
+
+	var offer string
+	if err := json.Unmarshal(body, &offer); err == nil && offer != "" {
+		return offer, nil
+	}
+
+	offer = strings.TrimSpace(string(body))
+	if offer == "" {
+		return "", errors.New("phoenixd /createoffer returned empty offer")
+	}
+
+	return offer, nil
+}
+
+func (svc *PhoenixService) PayOffer(ctx context.Context, offer string, amountSat uint64, payerNote string) (*lnclient.PayOfferResponse, error) {
+	form := url.Values{}
+	form.Add("offer", offer)
+	form.Add("amountSat", strconv.FormatUint(amountSat, 10))
+	if payerNote != "" {
+		form.Add("message", payerNote)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, svc.Address+"/payoffer", strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Add("Authorization", "Basic "+svc.Authorization)
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("phoenixd /payoffer returned non-success status: %d %s", resp.StatusCode, string(body))
+	}
+
+	var payRes PayOfferResponse
+	if err := json.Unmarshal(body, &payRes); err != nil {
+		return nil, err
+	}
+	if payRes.PaymentHash == "" {
+		return nil, errors.New("phoenixd /payoffer returned empty payment hash")
+	}
+
+	return &lnclient.PayOfferResponse{
+		Preimage:    payRes.PaymentPreimage,
+		FeeMsat:     uint64(payRes.RoutingFeeSat) * 1000,
+		PaymentHash: payRes.PaymentHash,
+	}, nil
 }
 
 func (svc *PhoenixService) ListOnchainTransactions(ctx context.Context) ([]lnclient.OnchainTransaction, error) {

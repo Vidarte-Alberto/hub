@@ -260,6 +260,10 @@ func (mln *MockLn) MakeOffer(ctx context.Context, description string) (string, e
 	return "", errors.New("not supported")
 }
 
+func (mln *MockLn) PayOffer(ctx context.Context, offer string, amountSat uint64, payerNote string) (*lnclient.PayOfferResponse, error) {
+	return nil, errors.New("not supported")
+}
+
 func (mln *MockLn) ListOnchainTransactions(ctx context.Context) ([]lnclient.OnchainTransaction, error) {
 	return nil, errors.ErrUnsupported
 }

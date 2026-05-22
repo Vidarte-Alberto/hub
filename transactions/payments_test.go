@@ -387,6 +387,7 @@ func TestSendPaymentSync_PendingHasFeeReserve(t *testing.T) {
 	// fake a delay to ensure the payment is still pending
 	delay := 10 * time.Second
 	svc.LNClient.(*tests.MockLn).PaymentDelay = &delay
+	svc.LNClient.(*tests.MockLn).MockTransaction = &lnclient.Transaction{}
 
 	transactionsService := NewTransactionsService(svc.DB, svc.EventPublisher)
 	go func() {

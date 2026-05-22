@@ -185,6 +185,7 @@ func (httpSvc *HttpService) RegisterSharedRoutes(e *echo.Echo) {
 	fullAccessApiGroup.POST("/payments/:invoice", httpSvc.sendPaymentHandler)
 	fullAccessApiGroup.POST("/invoices", httpSvc.makeInvoiceHandler)
 	fullAccessApiGroup.POST("/offers", httpSvc.makeOfferHandler)
+	fullAccessApiGroup.POST("/offers/pay", httpSvc.payOfferHandler)
 	fullAccessApiGroup.POST("/reset-router", httpSvc.resetRouterHandler)
 	fullAccessApiGroup.POST("/stop", httpSvc.stopHandler)
 	fullAccessApiGroup.POST("/command", httpSvc.execCustomNodeCommandHandler)
@@ -671,6 +672,31 @@ func (httpSvc *HttpService) makeOfferHandler(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, offer)
+}
+
+func (httpSvc *HttpService) payOfferHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	var payOfferRequest api.PayOfferRequest
+	if err := c.Bind(&payOfferRequest); err != nil {
+		return c.JSON(http.StatusBadRequest, ErrorResponse{
+			Message: fmt.Sprintf("Bad request: %s", err.Error()),
+		})
+	}
+	if payOfferRequest.AmountSat == nil || *payOfferRequest.AmountSat == 0 {
+		return c.JSON(http.StatusBadRequest, ErrorResponse{
+			Message: "Bad request: amountSat must be greater than 0",
+		})
+	}
+
+	paymentResponse, err := httpSvc.api.PayOffer(ctx, payOfferRequest.Offer, *payOfferRequest.AmountSat, payOfferRequest.PayerNote, payOfferRequest.Metadata, payOfferRequest.FromAppID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Message: err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, paymentResponse)
 }
 
 func (httpSvc *HttpService) makeInvoiceHandler(c echo.Context) error {

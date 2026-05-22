@@ -1653,6 +1653,10 @@ func (svc *LNDService) MakeOffer(ctx context.Context, description string) (strin
 	return "", errors.New("not supported")
 }
 
+func (svc *LNDService) PayOffer(ctx context.Context, offer string, amountSat uint64, payerNote string) (*lnclient.PayOfferResponse, error) {
+	return nil, errors.New("not supported")
+}
+
 func (svc *LNDService) ListOnchainTransactions(ctx context.Context) ([]lnclient.OnchainTransaction, error) {
 	resp, err := svc.client.GetTransactions(ctx, &lnrpc.GetTransactionsRequest{})
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/getAlby/hub/constants"
 	"github.com/getAlby/hub/db"
+	"github.com/getAlby/hub/lnclient"
 	"github.com/getAlby/hub/tests"
 )
 
@@ -18,6 +19,7 @@ func TestLookupTransaction_IncomingPayment(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	svc.LNClient.(*tests.MockLn).MockTransaction = &lnclient.Transaction{}
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
@@ -45,6 +47,7 @@ func TestLookupTransaction_OutgoingPayment(t *testing.T) {
 	svc, err := tests.CreateTestService(t)
 	require.NoError(t, err)
 	defer svc.Remove()
+	svc.LNClient.(*tests.MockLn).MockTransaction = &lnclient.Transaction{}
 
 	mockPreimage := tests.MockLNClientTransaction.Preimage
 	svc.DB.Create(&db.Transaction{
